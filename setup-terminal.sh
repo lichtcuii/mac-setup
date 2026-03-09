@@ -1,146 +1,193 @@
 #!/usr/bin/env bash
 
-# -----------------------------------------------------------------------------
-# Terminal Environment Bootstrap Script
-#
-# 作用：
-#   一键初始化现代终端开发环境，适用于 macOS 和基于 apt 的 Linux 发行版。
-#
-# 安装与配置内容：
-#   - Alacritty：GPU 加速终端
-#   - Zellij：终端多路复用器
-#   - Starship：跨 shell 提示符
-#   - Catppuccin：Alacritty 主题
-#   - zoxide：智能目录跳转
-#   - eza：增强版 ls
-#   - ripgrep：高速文本搜索
-#   - bat：带高亮的 cat
-#   - fzf：模糊搜索工具
-#   - Neovim + LazyVim：现代编辑器环境
-#   - Git aliases：常用 Git 简写命令
-#
-# 脚本行为：
-#   1. 根据操作系统安装所需软件
-#   2. 写入 Alacritty / Zellij / Starship 配置
-#   3. 向 ~/.zshrc 追加常用初始化和 alias
-#   4. 安装 LazyVim（若本地尚未存在 Neovim 配置）
-#   5. 配置常用 Git aliases
-#
-# 注意事项：
-#   - 本脚本会修改 ~/.zshrc
-#   - 本脚本会写入 ~/.config 下的相关配置文件
-#   - 若 ~/.config/nvim 已存在，则不会覆盖现有 Neovim 配置
-#   - Linux 版本默认仅支持 apt 包管理器
-#
-# 使用方式：
-#   chmod +x setup-terminal.sh
-#   ./setup-terminal.sh
-# -----------------------------------------------------------------------------
+set -Eeuo pipefail
 
-set -e
+readonly OS="$(uname -s)"
+readonly CONFIG_DIR="${HOME}/.config"
+readonly ZSHRC="${HOME}/.zshrc"
+readonly ALACRITTY_THEME_DIR="${CONFIG_DIR}/alacritty/themes"
+readonly ALACRITTY_THEME_FILE="${ALACRITTY_THEME_DIR}/catppuccin-mocha.toml"
+readonly ALACRITTY_THEME_URL="https://raw.githubusercontent.com/catppuccin/alacritty/main/catppuccin-mocha.toml"
+readonly LAZYVIM_REPO="https://github.com/LazyVim/starter"
 
-echo "==== Terminal Environment Setup ===="
+log() {
+    printf '[INFO] %s\n' "$1"
+}
 
-OS="$(uname)"
-CONFIG_DIR="$HOME/.config"
+warn() {
+    printf '[WARN] %s\n' "$1"
+}
 
-mkdir -p "$CONFIG_DIR"
+error() {
+    printf '[ERROR] %s\n' "$1" >&2
+}
+
+on_error() {
+    error "Setup failed at line $1."
+}
+
+trap 'on_error $LINENO' ERR
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+append_line_once() {
+    local line="$1"
+    local file="$2"
+
+    touch "$file"
+    grep -qxF "$line" "$file" || printf '%s\n' "$line" >> "$file"
+}
+
+remove_line_if_present() {
+    local line="$1"
+    local file="$2"
+    local temp_file
+
+    touch "$file"
+    temp_file="$(mktemp)"
+    awk -v target="$line" '$0 != target { print }' "$file" > "$temp_file"
+    mv "$temp_file" "$file"
+}
+
+upsert_alias_line() {
+    local alias_name="$1"
+    local alias_value="$2"
+    local file="$3"
+    local temp_file
+
+    touch "$file"
+    temp_file="$(mktemp)"
+    awk -v name="$alias_name" 'index($0, "alias " name "=") != 1 { print }' "$file" > "$temp_file"
+    mv "$temp_file" "$file"
+    printf 'alias %s="%s"\n' "$alias_name" "$alias_value" >> "$file"
+}
+
+detect_platform() {
+    case "$OS" in
+        Darwin)
+            printf 'macos\n'
+            ;;
+        Linux)
+            printf 'linux\n'
+            ;;
+        *)
+            error "Unsupported operating system: $OS"
+            exit 1
+            ;;
+    esac
+}
+
+install_homebrew_packages() {
+    local formulas=(
+        alacritty
+        zellij
+        starship
+        neovim
+        zoxide
+        eza
+        ripgrep
+        bat
+        fzf
+        git
+        curl
+    )
+    local formula
+
+    for formula in "${formulas[@]}"; do
+        if brew list "$formula" >/dev/null 2>&1; then
+            log "Homebrew formula already installed: $formula"
+        else
+            log "Installing Homebrew formula: $formula"
+            brew install "$formula"
+        fi
+    done
+
+    if brew list --cask font-jetbrains-mono-nerd-font >/dev/null 2>&1; then
+        log "Homebrew cask already installed: font-jetbrains-mono-nerd-font"
+    else
+        log "Installing Homebrew cask: font-jetbrains-mono-nerd-font"
+        brew install --cask font-jetbrains-mono-nerd-font
+    fi
+}
 
 install_macos() {
-    echo "[macOS] Using Homebrew to install required packages..."
+    log "Using Homebrew to install required packages."
 
-    if ! command -v brew >/dev/null 2>&1; then
-        echo "[ERROR] Homebrew is not installed."
-        echo "Please install Homebrew first, then rerun this script."
+    if ! command_exists brew; then
+        error "Homebrew is not installed. Install it first, then rerun this script."
         exit 1
     fi
 
-    echo "[macOS] Updating Homebrew..."
     brew update
+    install_homebrew_packages
+}
 
-    echo "[macOS] Installing terminal tools..."
-    brew install \
-        alacritty \
-        zellij \
-        starship \
-        neovim \
-        zoxide \
-        eza \
-        ripgrep \
-        bat \
-        fzf \
-        git \
+install_linux_base_packages() {
+    local packages=(
+        alacritty
+        zellij
+        neovim
+        ripgrep
+        bat
+        fzf
+        git
         curl
+        zsh
+    )
 
-    echo "[macOS] Installing JetBrains Mono Nerd Font..."
-    brew install --cask font-jetbrains-mono-nerd-font
+    log "Updating apt package index."
+    sudo apt update
 
-    echo "[macOS] Package installation completed."
+    log "Installing base packages from apt."
+    sudo apt install -y "${packages[@]}"
+}
+
+install_linux_extras() {
+    if ! command_exists starship; then
+        log "Installing Starship."
+        curl -fsSL https://starship.rs/install.sh | sh -s -- -y
+    else
+        log "Starship already installed."
+    fi
+
+    if ! command_exists zoxide; then
+        log "Installing zoxide."
+        curl -fsSL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash
+    else
+        log "zoxide already installed."
+    fi
+
+    if ! command_exists eza; then
+        log "Installing eza from apt when available."
+        sudo apt install -y eza || warn "Unable to install eza via apt. Install it manually if needed."
+    else
+        log "eza already installed."
+    fi
 }
 
 install_linux() {
-    echo "[Linux] Using apt to install required packages..."
-
-    echo "[Linux] Updating package index..."
-    sudo apt update
-
-    echo "[Linux] Installing base packages..."
-    sudo apt install -y \
-        alacritty \
-        zellij \
-        neovim \
-        ripgrep \
-        bat \
-        fzf \
-        git \
-        curl \
-        zsh
-
-    if ! command -v starship >/dev/null 2>&1; then
-        echo "[Linux] Starship not found. Installing..."
-        curl -sS https://starship.rs/install.sh | sh -s -- -y
-    else
-        echo "[Linux] Starship already installed. Skipping."
+    if ! command_exists apt; then
+        error "This Linux path only supports apt-based distributions."
+        exit 1
     fi
 
-    if ! command -v zoxide >/dev/null 2>&1; then
-        echo "[Linux] zoxide not found. Installing..."
-        curl -sS https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | bash
-    else
-        echo "[Linux] zoxide already installed. Skipping."
-    fi
-
-    if ! command -v eza >/dev/null 2>&1; then
-        echo "[Linux] eza not found. Attempting installation via apt..."
-        sudo apt install -y eza || true
-    else
-        echo "[Linux] eza already installed. Skipping."
-    fi
-
-    echo "[Linux] Package installation step completed."
+    install_linux_base_packages
+    install_linux_extras
 }
 
 install_catppuccin_alacritty() {
-    echo "[Theme] Installing Catppuccin Mocha theme for Alacritty..."
-
-    mkdir -p "$CONFIG_DIR/alacritty/themes"
-
-    rm -rf /tmp/catppuccin
-    git clone --depth=1 https://github.com/catppuccin/alacritty.git /tmp/catppuccin
-
-    cp /tmp/catppuccin/catppuccin-mocha.toml \
-       "$CONFIG_DIR/alacritty/themes/"
-
-    rm -rf /tmp/catppuccin
-
-    echo "[Theme] Catppuccin theme installed."
+    log "Installing Catppuccin Mocha theme for Alacritty."
+    mkdir -p "$ALACRITTY_THEME_DIR"
+    curl -fsSL "$ALACRITTY_THEME_URL" -o "$ALACRITTY_THEME_FILE"
 }
 
 write_alacritty_config() {
-    echo "[Config] Writing Alacritty configuration..."
-    mkdir -p "$CONFIG_DIR/alacritty"
+    log "Writing Alacritty configuration."
+    mkdir -p "${CONFIG_DIR}/alacritty"
 
-cat > "$CONFIG_DIR/alacritty/alacritty.toml" <<EOF
+    cat > "${CONFIG_DIR}/alacritty/alacritty.toml" <<'EOF'
 [general]
 import = [
  "~/.config/alacritty/themes/catppuccin-mocha.toml"
@@ -168,27 +215,23 @@ save_to_clipboard = true
 [env]
 TERM = "xterm-256color"
 EOF
-
-    echo "[Config] Alacritty configuration written to $CONFIG_DIR/alacritty/alacritty.toml"
 }
 
 write_zellij_config() {
-    echo "[Config] Writing Zellij configuration..."
-    mkdir -p "$CONFIG_DIR/zellij"
+    log "Writing Zellij configuration."
+    mkdir -p "${CONFIG_DIR}/zellij"
 
-cat > "$CONFIG_DIR/zellij/config.kdl" <<EOF
+    cat > "${CONFIG_DIR}/zellij/config.kdl" <<'EOF'
 pane_frames false
 scroll_buffer_size 10000
 default_layout "compact"
 EOF
-
-    echo "[Config] Zellij configuration written to $CONFIG_DIR/zellij/config.kdl"
 }
 
 write_starship_config() {
-    echo "[Config] Writing Starship configuration..."
+    log "Writing Starship configuration."
 
-cat > "$CONFIG_DIR/starship.toml" <<EOF
+    cat > "${CONFIG_DIR}/starship.toml" <<'EOF'
 add_newline = true
 
 [character]
@@ -204,110 +247,99 @@ symbol = " "
 [git_status]
 style = "yellow"
 EOF
-
-    echo "[Config] Starship configuration written to $CONFIG_DIR/starship.toml"
 }
 
-setup_git_aliases() {
-    echo "[Git] Configuring global Git aliases..."
+setup_git_plugin_aliases() {
+    log "Configuring git aliases from oh-my-zsh git.plugin.zsh."
 
-    git config --global alias.st status
-    git config --global alias.co checkout
-    git config --global alias.cb "checkout -b"
-    git config --global alias.br branch
-    git config --global alias.cm commit
-    git config --global alias.ci commit
-    git config --global alias.amend "commit --amend"
-    git config --global alias.last "log -1 HEAD"
-    git config --global alias.lg "log --oneline --graph --decorate --all"
-    git config --global alias.df diff
-    git config --global alias.pl pull
-    git config --global alias.ps push
+    upsert_alias_line 'g' 'git' "$ZSHRC"
+    upsert_alias_line 'ga' 'git add' "$ZSHRC"
+    upsert_alias_line 'gaa' 'git add --all' "$ZSHRC"
+    upsert_alias_line 'gb' 'git branch' "$ZSHRC"
+    upsert_alias_line 'gc' 'git commit --verbose' "$ZSHRC"
+    upsert_alias_line 'gca' 'git commit --verbose --all' "$ZSHRC"
+    upsert_alias_line 'gcam' 'git commit --all --message' "$ZSHRC"
+    upsert_alias_line 'gco' 'git checkout' "$ZSHRC"
+    upsert_alias_line 'gcb' 'git checkout -b' "$ZSHRC"
+    upsert_alias_line 'gd' 'git diff' "$ZSHRC"
+    upsert_alias_line 'gl' 'git pull' "$ZSHRC"
+    upsert_alias_line 'gp' 'git push' "$ZSHRC"
+    upsert_alias_line 'gst' 'git status' "$ZSHRC"
 
-    echo "[Git] Git aliases configured."
+    remove_line_if_present 'alias gpl="git pull"' "$ZSHRC"
 }
 
 setup_zsh() {
-    echo "[Shell] Updating ~/.zshrc ..."
-    ZSHRC="$HOME/.zshrc"
+    log "Updating ~/.zshrc."
 
-    touch "$ZSHRC"
-
-    grep -qxF 'eval "$(starship init zsh)"' "$ZSHRC" || \
-    echo 'eval "$(starship init zsh)"' >> "$ZSHRC"
-
-    grep -qxF 'eval "$(zoxide init zsh)"' "$ZSHRC" || \
-    echo 'eval "$(zoxide init zsh)"' >> "$ZSHRC"
-
-    grep -qxF 'alias ls="eza --icons"' "$ZSHRC" || \
-    echo 'alias ls="eza --icons"' >> "$ZSHRC"
-
-    grep -qxF 'alias ll="eza -lah --icons"' "$ZSHRC" || \
-    echo 'alias ll="eza -lah --icons"' >> "$ZSHRC"
-
-    grep -qxF 'alias cat="bat"' "$ZSHRC" || \
-    echo 'alias cat="bat"' >> "$ZSHRC"
-
-    grep -qxF 'alias tree="eza --tree"' "$ZSHRC" || \
-    echo 'alias tree="eza --tree"' >> "$ZSHRC"
-
-    grep -qxF 'if [[ -z "$ZELLIJ" ]]; then zellij; fi' "$ZSHRC" || \
-    echo 'if [[ -z "$ZELLIJ" ]]; then zellij; fi' >> "$ZSHRC"
-
-    echo "[Shell] ~/.zshrc update completed."
+    setup_git_plugin_aliases
+    append_line_once 'eval "$(starship init zsh)"' "$ZSHRC"
+    append_line_once 'eval "$(zoxide init zsh)"' "$ZSHRC"
+    append_line_once 'alias ls="eza --icons"' "$ZSHRC"
+    append_line_once 'alias ll="eza -lah --icons"' "$ZSHRC"
+    append_line_once 'alias cat="bat"' "$ZSHRC"
+    append_line_once 'alias tree="eza --tree"' "$ZSHRC"
+    append_line_once 'if [[ -z "$ZELLIJ" ]]; then zellij; fi' "$ZSHRC"
 }
 
 install_lazyvim() {
-    if [ ! -d "$CONFIG_DIR/nvim" ]; then
-        echo "[Neovim] Installing LazyVim starter configuration..."
-
-        git clone https://github.com/LazyVim/starter "$CONFIG_DIR/nvim"
-        rm -rf "$CONFIG_DIR/nvim/.git"
-
-        echo "[Neovim] LazyVim installed."
-    else
-        echo "[Neovim] Existing Neovim configuration detected at $CONFIG_DIR/nvim"
-        echo "[Neovim] Skipping LazyVim installation to avoid overwriting your setup."
+    if [[ -d "${CONFIG_DIR}/nvim" ]]; then
+        log "Existing Neovim configuration detected at ${CONFIG_DIR}/nvim. Skipping LazyVim install."
+        return
     fi
+
+    log "Installing LazyVim starter configuration."
+    git clone "$LAZYVIM_REPO" "${CONFIG_DIR}/nvim"
+    rm -rf "${CONFIG_DIR}/nvim/.git"
+}
+
+print_summary() {
+    cat <<'EOF'
+
+==================================
+Setup completed successfully.
+==================================
+
+Next steps:
+1. Reload your shell configuration:
+   source ~/.zshrc
+2. Open Alacritty to start using the environment.
+3. Launch nvim once to let LazyVim install plugins.
+
+Useful commands:
+  gst       # git status
+  gco main  # git checkout main
+  gp        # git push
+  z <dir>   # jump to frequently used directories
+  ll        # detailed directory listing
+  rg text   # fast text search
+
+EOF
 }
 
 main() {
-    echo "[Init] Detecting operating system..."
+    local platform
 
-    if [[ "$OS" == "Darwin" ]]; then
-        echo "[Init] Detected macOS."
-        install_macos
-    else
-        echo "[Init] Detected Linux."
-        install_linux
-    fi
+    log "Starting terminal environment setup."
+    mkdir -p "$CONFIG_DIR"
+    platform="$(detect_platform)"
+
+    case "$platform" in
+        macos)
+            install_macos
+            ;;
+        linux)
+            install_linux
+            ;;
+    esac
 
     install_catppuccin_alacritty
     write_alacritty_config
     write_zellij_config
     write_starship_config
-    setup_git_aliases
     setup_zsh
     install_lazyvim
-
-    echo ""
-    echo "=================================="
-    echo "Setup completed successfully."
-    echo "=================================="
-    echo ""
-    echo "Next steps:"
-    echo "1. Reload your shell configuration:"
-    echo "   source ~/.zshrc"
-    echo "2. Open Alacritty to start using the environment."
-    echo "3. Launch nvim once to let LazyVim install plugins."
-    echo ""
-    echo "Useful commands:"
-    echo "  git st    # git status"
-    echo "  git lg    # compact git log graph"
-    echo "  z <dir>   # jump to frequently used directories"
-    echo "  ll        # detailed directory listing"
-    echo "  rg text   # fast text search"
-    echo ""
+    print_summary
 }
 
-main
+main "$@"
