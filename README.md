@@ -17,14 +17,11 @@
 - fzf
 - Neovim
 - LazyVim starter
-- Git shell aliases
 
 ## 适用平台
 
 - macOS
   需要提前安装 Homebrew
-- Linux
-  当前仅支持基于 `apt` 的发行版
 
 ## 脚本行为
 
@@ -87,15 +84,6 @@ source ~/.zshrc
 这些别名写入 `~/.zshrc`，定义参考 oh-my-zsh 官方 git 插件：
 来源：https://github.com/ohmyzsh/ohmyzsh/blob/master/plugins/git/git.plugin.zsh
 
-例如：
-
-- `gst` -> `git status`
-- `gco main` -> `git checkout main`
-- `gcb feature/demo` -> `git checkout -b feature/demo`
-- `gaa` -> `git add --all`
-- `gcam "message"` -> `git commit --all --message "message"`
-- `gp` -> `git push`
-
 ## 注意事项
 
 - 脚本会修改 `~/.zshrc`
@@ -103,15 +91,3 @@ source ~/.zshrc
 - 脚本会覆盖 `~/.config/zellij/config.kdl`
 - 脚本会覆盖 `~/.config/starship.toml`
 - 如果已经存在 `~/.config/nvim`，脚本不会覆盖你的 Neovim 配置
-- Linux 下部分工具可能因发行版软件源差异无法直接通过 `apt` 安装
-
-## 改进点
-
-当前版本相较初始脚本做了这些优化：
-
-- 增加 `set -Eeuo pipefail`，失败时更容易定位问题
-- 抽离公共函数，减少重复逻辑
-- Homebrew 安装改为跳过已安装项目，提升幂等性
-- Catppuccin 主题下载改为直接拉取原始文件，避免临时 clone 仓库
-- `~/.zshrc` 写入抽象为统一的去重追加逻辑
-- README 补充了用途、行为、风险和使用方式
